@@ -1,60 +1,72 @@
-import RPi.GPIO as GPIO
 import time
+import os
+import requests
+from weather_hardware import blink_blue_continuous, blink_pink_continuous, idle_weather
 
 # -----------------------------
-# GPIO SETUP
+# CONFIG
 # -----------------------------
-GPIO.setwarnings(False)
-GPIO.setmode(GPIO.BOARD)
+CITY = "San Juan,PR"
+CHECK_INTERVAL = 300  # 5 minutes
 
-BLUE_LED = 29   # Clear weather LED
-PINK_LED = 31   # Rain / severe weather LED
+API_KEY = os.getenv("OPENWEATHER_API_KEY")
+FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
-GPIO.setup(BLUE_LED, GPIO.OUT)
-GPIO.setup(PINK_LED, GPIO.OUT)
+if not API_KEY:
+    raise RuntimeError("OPENWEATHER_API_KEY not set")
 
-# -----------------------------
-# BASE STATES
-# -----------------------------
-def idle_weather():
-    """Both LEDs ON, no blinking"""
-    GPIO.output(BLUE_LED, GPIO.HIGH)
-    GPIO.output(PINK_LED, GPIO.HIGH)
-
+SEVERE_KEYWORDS = ["rain", "drizzle", "thunderstorm", "storm", "snow"]
 
 # -----------------------------
-# ALERT STATES
+# FUNCTIONS
 # -----------------------------
-def blink_blue(duration=15):
-    """Clear day → Blue LED blinks, pink stays ON"""
-    GPIO.output(PINK_LED, GPIO.HIGH)
+def severe_today():
+    """Check full-day forecast for severe weather"""
+    params = {
+        "q": CITY,
+        "appid": API_KEY,
+        "units": "metric"
+    }
+    response = requests.get(FORECAST_URL, params=params, timeout=10)
+    response.raise_for_status()
+    data = response.json()
 
-    end_time = time.time() + duration
-    while time.time() < end_time:
-        GPIO.output(BLUE_LED, GPIO.HIGH)
-        time.sleep(0.5)
-        GPIO.output(BLUE_LED, GPIO.LOW)
-        time.sleep(0.5)
+    for entry in data["list"]:
+        condition = entry["weather"][0]["main"].lower()
+        for keyword in SEVERE_KEYWORDS:
+            if keyword in condition:
+                return True
+    return False
 
+# -----------------------------
+# MAIN LOOP
+# -----------------------------
+print("Weather Tracker Starting...")
+idle_weather()
+
+current_status = None  # None, "severe", or "clear"
+
+try:
+    while True:
+        try:
+            if severe_today():
+                if current_status != "severe":
+                    current_status = "severe"
+                    print("Severe weather detected today → Pink LED blinking")
+                    blink_pink_continuous(lambda: current_status != "severe")
+            else:
+                if current_status != "clear":
+                    current_status = "clear"
+                    print("Clear weather all day → Blue LED blinking")
+                    blink_blue_continuous(lambda: current_status != "clear")
+
+            time.sleep(CHECK_INTERVAL)
+
+        except requests.RequestException as e:
+            print(f"Weather API error: {e}")
+            idle_weather()
+            time.sleep(60)
+
+except KeyboardInterrupt:
+    print("Weather Tracker stopped by user")
     idle_weather()
-
-
-def blink_pink(duration=15):
-    """Rain/severe weather → Pink LED blinks, blue stays ON"""
-    GPIO.output(BLUE_LED, GPIO.HIGH)
-
-    end_time = time.time() + duration
-    while time.time() < end_time:
-        GPIO.output(PINK_LED, GPIO.HIGH)
-        time.sleep(0.5)
-        GPIO.output(PINK_LED, GPIO.LOW)
-        time.sleep(0.5)
-
-    idle_weather()
-
-
-# -----------------------------
-# CLEANUP (optional)
-# -----------------------------
-def cleanup():
-    GPIO.cleanup()
