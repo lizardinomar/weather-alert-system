@@ -44,7 +44,7 @@ Pins can be changed at any time.
 
 ## Wiring Diagram
 
-![Wiring](hardware/wt_diagram.png)
+![Wiring](wt_diagram.png)
 
 ## Hardware Test
 To verify the system is working:
